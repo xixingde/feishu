@@ -3,6 +3,7 @@
  * 基于 https://opencode.ai/docs/server 接口封装
  */
 
+import { EventSource } from 'eventsource';
 import { HttpClient, HttpClientConfig, RequestOptions, Response } from './http-client';
 
 // 请求/响应类型定义（根据实际 API 文档调整）
@@ -37,10 +38,99 @@ export interface UpdateServerRequest {
   config?: Record<string, any>;
 }
 
+// Session 相关类型定义
+export interface CreateSessionRequest {
+  parentID?: string;
+  title?: string;
+}
+
+export interface SessionResponse {
+  id: string;
+  parentID?: string;
+  title?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  [key: string]: any; // 允许其他未知字段
+}
+
+// SSE 相关类型定义
+export interface MessagePartDeltaPayload {
+  type: 'message.part.delta';
+  properties: {
+    sessionID: string;
+    delta: string;
+  };
+}
+
+export interface SessionStatusPayload {
+  type: 'session.status';
+  properties: {
+    sessionID: string;
+    status: {
+      type: 'idle' | 'busy' | string;
+    };
+  };
+}
+
+export interface SessionErrorPayload {
+  type: 'session.error';
+  properties: {
+    sessionID: string;
+    error: string;
+  };
+}
+
+export interface SessionUpdatedPayload {
+  type: 'session.updated';
+  properties: {
+    info: {
+      id: string;
+      slug: string;
+      projectID: string;
+      directory: string;
+      title: string;
+      version: string;
+      summary?: Record<string, any>;
+      time?: Record<string, any>;
+    };
+  };
+}
+
+export type SSEPayload = MessagePartDeltaPayload | SessionStatusPayload | SessionErrorPayload | SessionUpdatedPayload | SessionDiffPayload;
+
+export interface SessionDiffPayload {
+  type: 'session.diff';
+  properties: {
+    sessionID: string;
+    diff: string[];
+  };
+}
+
+export interface SSEMessage {
+  payload?: SSEPayload;
+  type?: string;
+  properties?: Record<string, any>;
+}
+
+export interface PromptRequest {
+  parts: Array<{ type: 'text'; text: string }>;
+  agent?: string;
+}
+
+export interface SSECallbacks {
+  onDelta?: (delta: string, sessionID: string) => void;
+  onComplete?: (sessionID: string) => void;
+  onError?: (error: string, sessionID: string) => void;
+  onMessage?: (data: SSEMessage) => void;
+  onSessionUpdated?: (info: SessionUpdatedPayload['properties']['info'], sessionID: string) => void;
+}
+
 export class OpenCodeServerService {
   private httpClient: HttpClient;
+  private baseURL: string;
 
   constructor(config: Omit<HttpClientConfig, 'headers'>) {
+    this.baseURL = config.baseURL;
     this.httpClient = new HttpClient({
       ...config,
       headers: {
@@ -91,6 +181,14 @@ export class OpenCodeServerService {
    */
   public async deleteServer(serverId: string): Promise<Response<void>> {
     return this.httpClient.delete<void>(`servers/${serverId}`);
+  }
+
+  /**
+   * 创建新会话
+   * POST /session
+   */
+  public async createSession(data: CreateSessionRequest): Promise<Response<SessionResponse>> {
+    return this.httpClient.post<SessionResponse>('session', data);
   }
 
   /**
@@ -146,6 +244,166 @@ export class OpenCodeServerService {
    */
   public async customRequest<T = any>(options: RequestOptions): Promise<Response<T>> {
     return this.httpClient.request<T>(options);
+  }
+
+  /**
+   * 创建 SSE EventSource 连接
+   * @param sessionID 会话 ID
+   * @param callbacks 回调函数
+   * @returns EventSource 实例（需手动关闭）
+   */
+  public createSSEConnection(
+    sessionID: string,
+    callbacks: SSECallbacks
+  ): EventSource {
+    const eventSourceUrl = `${this.baseURL}/event`;
+    const es = new EventSource(eventSourceUrl);
+
+    es.onmessage = (event: MessageEvent) => {
+      if (!event.data) {
+        console.warn('收到空消息');
+        return;
+      }
+
+      let data: SSEMessage;
+      try {
+        data = JSON.parse(event.data);
+      } catch (err) {
+        console.error('JSON 解析失败：', err);
+        console.error('原始数据：', event.data);
+        return;
+      }
+
+      // 支持两种格式：1. { payload: {...} }  2. { type: '...', properties: {...} }
+      const payload = data.payload || (data.type && data.properties ? { type: data.type, properties: data.properties } : null);
+
+      // 回调原始消息
+      if (callbacks.onMessage) {
+        callbacks.onMessage(data);
+      }
+
+      if (!payload) {
+        console.warn('收到无 payload 的消息：', data);
+        return;
+      }
+
+      // 实时接收 AI 流式输出
+      if (payload.type === 'message.part.delta' && payload.properties?.sessionID === sessionID) {
+        const delta = payload.properties.delta;
+        if (callbacks.onDelta) {
+          callbacks.onDelta(delta, sessionID);
+        }
+      }
+
+      // 处理 session.diff 消息
+      if (payload.type === 'session.diff' && payload.properties?.sessionID === sessionID) {
+        const diff = payload.properties.diff;
+        if (diff && diff.length > 0) {
+          // 将 diff 数组的每个元素作为 delta 处理
+          diff.forEach((d: string) => {
+            if (callbacks.onDelta) {
+              callbacks.onDelta(d, sessionID);
+            }
+          });
+        }
+      }
+
+      // 监听完成信号
+      if (payload.type === 'session.status'
+          && payload.properties?.sessionID === sessionID
+          && payload.properties.status?.type === 'idle') {
+        if (callbacks.onComplete) {
+          callbacks.onComplete(sessionID);
+        }
+        es.close();
+      }
+
+      // 监听错误
+      if (payload.type === 'session.error' && payload.properties?.sessionID === sessionID) {
+        const error = payload.properties.error;
+        if (callbacks.onError) {
+          callbacks.onError(error, sessionID);
+        }
+        es.close();
+      }
+
+      // 监听会话更新
+      if (payload.type === 'session.updated' && payload.properties?.info) {
+        const info = payload.properties.info;
+        if (callbacks.onSessionUpdated) {
+          callbacks.onSessionUpdated(info, sessionID);
+        }
+      }
+    };
+
+    es.onerror = (err) => {
+      console.error('SSE 连接错误：', err);
+      es.close();
+    };
+
+    return es;
+  }
+
+  /**
+   * 发送异步消息并通过 SSE 接收流式响应
+   * @param sessionID 会话 ID
+   * @param prompt 消息内容
+   * @param agent 代理类型（可选）
+   * @param callbacks 回调函数
+   * @returns Promise<void> - 发送请求后立即返回
+   */
+  public async sendPromptWithSSE(
+    sessionID: string,
+    prompt: string,
+    agent: string = 'StrictSpec',
+    callbacks: SSECallbacks
+  ): Promise<void> {
+    // 先建立 SSE 连接
+    const es = this.createSSEConnection(sessionID, callbacks);
+
+    // 发送异步消息（204 立即返回）
+    await this.httpClient.post<void>(`session/${sessionID}/prompt_async`, {
+      parts: [{ type: 'text', text: prompt }],
+      agent,
+    } as PromptRequest);
+
+    // 返回 void，调用者可以通过回调处理流式响应
+    // 注意：如果需要等待完成，可使用 Promise 包装
+    return;
+  }
+
+  /**
+   * 发送异步消息并返回完整响应（等待 SSE 完成）
+   * @param sessionID 会话 ID
+   * @param prompt 消息内容
+   * @param agent 代理类型（可选）
+   * @returns 包含完整响应的 Promise
+   */
+  public async sendPromptAndWait(
+    sessionID: string,
+    prompt: string,
+    agent: string = 'StrictSpec'
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      let fullResponse = '';
+
+      this.sendPromptWithSSE(
+        sessionID,
+        prompt,
+        agent,
+        {
+          onDelta: (delta) => {
+            fullResponse += delta;
+          },
+          onComplete: () => {
+            resolve(fullResponse);
+          },
+          onError: (error) => {
+            reject(new Error(error));
+          },
+        }
+      ).catch(reject);
+    });
   }
 }
 

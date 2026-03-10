@@ -95,7 +95,7 @@ export class HttpClient {
       });
 
       return {
-        data: responseData,
+        data: responseData as unknown as T,
         status: response.status,
         statusText: response.statusText,
         headers: responseHeaders,

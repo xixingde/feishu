@@ -27,3 +27,26 @@
   timestamp: 1773122947,
   [Symbol(event-type)]: 'application.bot.menu_v6'
 }
+
+## 创建新会话
+session_id 在data.id
+
+新会话创建结果: {
+  data: {
+    id: 'ses_3295a2fbfffe1C2oa61mTEoa5W',
+    slug: 'jolly-squid',
+    version: '3.0.7',
+    projectID: '4b0ea68d7af9a6031a7ffda7ad66e0cb83315750',
+    directory: 'D:\\workspace\\0130\\opencode',
+    title: '新会话',
+    time: { created: 1773127716928, updated: 1773127716928 }
+  },
+  status: 200,
+  statusText: 'OK',
+  headers: {
+    'content-length': '254',
+    'content-type': 'application/json',
+    date: 'Tue, 10 Mar 2026 07:28:36 GMT',
+    vary: 'Origin'
+  }
+}
