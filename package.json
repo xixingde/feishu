@@ -1,0 +1,27 @@
+{
+  "name": "feishu",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xixingde/feishu.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/xixingde/feishu/issues"
+  },
+  "homepage": "https://github.com/xixingde/feishu#readme",
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.59.0",
+    "@types/node": "^25.3.5",
+    "eventsource": "^4.1.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
