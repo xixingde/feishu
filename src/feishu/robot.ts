@@ -1,6 +1,6 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { EventSource } from 'eventsource';
-import { initOpenCodeService, getOpenCodeService } from './src/opencode-service';
+import { initOpenCodeService, getOpenCodeService } from '../opencode/opencode-service';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -46,6 +46,7 @@ const sessionMap = new Map<string, {
 
 // 全局 session_id，用于复用（初始化为空）
 let currentSessionID: string = "";
+let currentSessionMode: string = "build"; // 默认模式
 
 wsClient.start({
   // 处理「接收消息」事件，事件类型为 im.message.receive_v1
@@ -62,29 +63,49 @@ wsClient.start({
         }
         
         // 处理新建会话菜单事件
-        if (event_key === 'new') {
-            writeLog('菜单事件: 创建新会话');
-            
-            // 发送创建新会话的请求（使用 opencode-service 接口）
-            // session_id 是由接口返回的，不是程序生成的
-            const sessionResponse = await openCodeService.createSession({
-                title: "新会话"
-            });
-            writeLog(`新会话创建结果: ${JSON.stringify(sessionResponse)}`);
-            
-            // 从接口响应中获取 session_id
-            const sessionID = sessionResponse?.data?.id;
-            if (!sessionID) {
-                writeLog(`创建会话失败：未获取到 session_id ${JSON.stringify(sessionResponse)}`, 'error');
-                sendReplyToLarkRecipient(openId, "创建会话失败，请重试。");
-                return;
-            }
-            writeLog(`创建新会话, sessionID: ${sessionID}`);
-            
-            // 保存 session_id 到全局变量，供 im.message.receive_v1 复用
-            currentSessionID = sessionID;
-            writeLog(`全局 session_id 已更新: ${currentSessionID}`);
+        let sessionMode = "build"; // 默认为 build 模式
+        
+        switch (event_key) {
+            case 'build':
+                sessionMode = "build";
+                writeLog('菜单事件: 创建 build 模式会话');
+                break;
+            case 'plan':
+                sessionMode = "plan";
+                writeLog('菜单事件: 创建 plan 模式会话');
+                break;
+            case 'spec':
+                sessionMode = "spec";
+                writeLog('菜单事件: 创建 spec 模式会话');
+                break;
+            case 'new':
+            default:
+                // 'new' 或其他未知事件键都使用默认的 build 模式
+                sessionMode = "build";
+                writeLog(`菜单事件: 创建新会话 (event_key: ${event_key}, 使用默认 build 模式)`);
+                break;
         }
+        
+        // 发送创建新会话的请求（使用 opencode-service 接口）
+        // session_id 是由接口返回的，不是程序生成的
+        const sessionResponse = await openCodeService.createSession({
+            title: "新会话"
+        });
+        writeLog(`新会话创建结果: ${JSON.stringify(sessionResponse)}`);
+        
+        // 从接口响应中获取 session_id
+        const sessionID = sessionResponse?.data?.id;
+        if (!sessionID) {
+            writeLog(`创建会话失败：未获取到 session_id ${JSON.stringify(sessionResponse)}`, 'error');
+            sendReplyToLarkRecipient(openId, "创建会话失败，请重试。");
+            return;
+        }
+        writeLog(`创建新会话, sessionID: ${sessionID}, 模式: ${sessionMode}`);
+        
+        // 保存 session_id 和 session_mode 到全局变量，供 im.message.receive_v1 复用
+        currentSessionID = sessionID;
+        currentSessionMode = sessionMode;
+        writeLog(`全局 session_id 已更新: ${currentSessionID}, 模式: ${currentSessionMode}`);
         
         // 返回事件名给客户端
         const eventMessage = `菜单事件: ${event_key}`;
@@ -143,10 +164,13 @@ wsClient.start({
       // 使用 sendPromptWithSSE 方法发送消息并接收流式响应
       let accumulatedContent = "";
       
+      // 记录当前使用的会话模式
+      writeLog(`会话 ${sessionID}: 使用模式 "${currentSessionMode}" 发送消息`);
+      
       await openCodeService.sendPromptWithSSE(
         sessionID,
         userMessage,
-        'build',
+        currentSessionMode,
         {
           onDelta: (delta, sID) => {
             accumulatedContent += delta;

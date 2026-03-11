@@ -15,19 +15,25 @@
 
 ```
 feishu/
-├── robot.ts              # 主程序入口，处理飞书消息和 AI 交互
-├── sse-client.js         # SSE 客户端示例代码
-├── api.md               # API 接口文档
 ├── src/
-│   ├── http-client.ts    # 通用 HTTP 客户端基类
-│   ├── opencode-service.ts # OpenCode API 服务封装类
-│   ├── example.ts        # 使用示例代码
-│   ├── test.ts          # 功能测试文件
-│   └── README.md        # API 使用文档
-├── doc/
-│   └── log.md           # 运行日志说明
+│   ├── index.ts          # 入口文件
+│   ├── feishu/
+│   │   ├── robot.ts      # 飞书机器人核心逻辑
+│   │   └── card.ts       # 卡片消息组件
+│   └── opencode/
+│       ├── opencode-service.ts # OpenCode API 服务封装
+│       ├── http-client.ts # HTTP 客户端
+│       ├── example.ts    # 使用示例
+│       ├── test.ts       # 功能测试
+│       └── README.md     # API 使用文档
 └── package.json         # 项目依赖配置
 ```
+
+## 文档
+
+- [API 接口文档](./docs/api.md)
+- [运行日志说明](./docs/log.md)
+- [项目概述](./docs/PROJECT_SUMMARY.md)
 
 ## 技术栈
 
@@ -71,10 +77,16 @@ const BASE = "http://127.0.0.1:4096";
 ### 4. 启动服务
 
 ```bash
-npx ts-node robot.ts
+# 方式一：使用 npm 脚本（推荐）
+npm start
+
+# 方式二：直接使用 ts-node 运行
+npx ts-node src/feishu/robot.ts
 ```
 
 服务启动后会建立 WebSocket 连接到飞书平台，开始接收消息。
+
+> 💡 **提示**：确保 OpenCode 服务（默认 `http://127.0.0.1:4096`）已启动，否则机器人无法正常响应 AI 消息。
 
 ## 使用说明
 
